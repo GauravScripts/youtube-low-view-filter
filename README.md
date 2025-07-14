@@ -19,7 +19,7 @@ A userscript that removes YouTube videos with fewer than 999 views from recommen
 ### After Filtering![img_1.png](img_1.png)
 
 ## Contributing
-Found a bug or have a feature request? Open an issue [here](https://github.com/GauravScripts/YouTube-Crappy-Videos-Remover/issues). Pull requests are welcome!
+Found a bug or have a feature request? Open an issue [here](https://github.com/GauravScripts/youtube-low-view-filter/issues/new). Pull requests are welcome!
 
 ## License
 [MIT License](LICENSE)
