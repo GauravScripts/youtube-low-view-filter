@@ -4,7 +4,7 @@ A userscript that removes YouTube videos with fewer than 999 views from recommen
 
 ## Installation
 1. Install [Tampermonkey](https://www.tampermonkey.net/) for Chrome, Firefox, or Safari.
-2. Click [here](https://raw.githubusercontent.com/GauravScripts/YouTube-Crappy-Videos-Remover/main/YouTubeCrappyVideosRemover.user.js) to install the script.
+2. Click [here](https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js) to install the script.
 3. Tampermonkey will prompt you to install; click "Install."
 
 ## Features
