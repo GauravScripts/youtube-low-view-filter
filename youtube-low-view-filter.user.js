@@ -1,12 +1,15 @@
 // ==UserScript==
-// @name         youtube low views video filter
+// @name         YouTube Crappy Videos Remover from Recommendations
 // @namespace    http://tampermonkey.net/
 // @version      3.5
-// @description  thanks to youtube for recommending crappy videos with ~10 views
-// @author       NiceL
+// @description  Removes YouTube videos with fewer than 999 views from recommendations. Screenshot: https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/img_1.png
+// @author       Gaurav Gupta
 // @match        *://*.youtube.com/*
 // @exclude      *://*.youtube.com/feed/subscriptions
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
+// @homepage     https://github.com/GauravScripts/youtube-low-view-filter
+// @downloadURL  https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
+// @updateURL    https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
 // @grant        none
 // ==/UserScript==
 
