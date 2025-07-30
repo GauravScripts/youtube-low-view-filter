@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Crappy Videos Remover from Recommendations
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.7
 // @description  Removes YouTube videos with fewer than 999 views from recommendations. Screenshot: https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/img_1.png
 // @author       Gaurav Gupta
 // @match        *://*.youtube.com/*
@@ -55,12 +55,12 @@ function IsSeparator(i)
 function IsBadVideo(videoViews)
 {
     if (!videoViews) {
-        return false;
+        return true; // No view count found, consider it bad
     }
 
     let text = videoViews.innerText;
     if (text.length == 0) {
-        return false;
+        return true; // Empty text, consider it bad
     }
 
     // Handle Indian number system (lakh, crore)
@@ -114,6 +114,29 @@ function IsBadVideo(videoViews)
     }
 
     return badVideo;
+}
+
+function IsMembersOnly(videoElement)
+{
+    if (!videoElement) {
+        return false;
+    }
+    
+    // Check for members-only badges
+    let membersOnlyElements = videoElement.querySelectorAll('.badge-style-type-members-only');
+    if (membersOnlyElements.length > 0) {
+        return true;
+    }
+    
+    // Check for "Members only" text
+    let textElements = videoElement.querySelectorAll('*');
+    for (let element of textElements) {
+        if (element.innerText && element.innerText.includes('Members only')) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 function IsBadShortVideo(videoViews)
@@ -180,7 +203,7 @@ function UpdateVideoFiltering()
             {
                 let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
 
-                if (IsBadVideo(videoViews)) {
+                if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
                     videosList[i].parentElement.remove();
                 }
             }
@@ -193,10 +216,34 @@ function UpdateVideoFiltering()
                     continue;
                 }
 
+                // Try the old metadata structure first
                 let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
+                
+                // If not found, try the new metadata structure
+                if (!videoViews) {
+                    let metadataElements = videosList[i].getElementsByClassName("yt-content-metadata-view-model-wiz__metadata-text");
+                    for (let j = 0; j < metadataElements.length; j++) {
+                        let text = metadataElements[j].innerText;
+                        if (text && text.includes('views')) {
+                            videoViews = metadataElements[j];
+                            break;
+                        }
+                    }
+                }
 
-                if (IsBadVideo(videoViews)) {
+                if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
                     videosList[i].parentElement.remove();
+                }
+            }
+
+            // Handle rich grid media (another layout variant)
+            videosList = document.querySelectorAll('ytd-rich-grid-media');
+            for (let i = 0; i < videosList.length; i++)
+            {
+                let videoViews = videosList[i].querySelector('.inline-metadata-item.style-scope.ytd-video-meta-block');
+                
+                if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
+                    videosList[i].remove();
                 }
             }
 
@@ -208,7 +255,7 @@ function UpdateVideoFiltering()
                 {
                     let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
 
-                    if (IsBadVideo(videoViews)) {
+                    if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
                         // Find the parent container to remove
                         let parentToRemove = videosList[i].closest('ytd-compact-video-renderer, ytd-video-preview');
                         if (parentToRemove) {
@@ -223,7 +270,7 @@ function UpdateVideoFiltering()
                 {
                     let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
 
-                    if (IsBadVideo(videoViews)) {
+                    if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
                         let parentToRemove = videosList[i].closest('ytd-compact-video-renderer');
                         if (parentToRemove) {
                             parentToRemove.remove();
@@ -235,7 +282,7 @@ function UpdateVideoFiltering()
                 videosList = document.querySelectorAll('ytd-compact-video-renderer');
                 videosList.forEach(video => {
                     let videoViews = video.querySelector('.inline-metadata-item.style-scope.ytd-video-meta-block');
-                    if (IsBadVideo(videoViews)) {
+                    if (IsBadVideo(videoViews) || IsMembersOnly(video)) {
                         video.remove();
                     }
                 });
@@ -249,7 +296,7 @@ function UpdateVideoFiltering()
                         // Check if this element contains view count (usually has "views" or numbers)
                         let viewText = viewsElement.innerText;
                         if (viewText && (viewText.includes('views') || viewText.includes('lakh') || viewText.includes('crore') || /\d/.test(viewText))) {
-                            if (IsBadVideo(viewsElement)) {
+                            if (IsBadVideo(viewsElement) || IsMembersOnly(video)) {
                                 video.remove();
                             }
                         }
