@@ -6,6 +6,7 @@
 // @author       Gaurav Gupta
 // @match        *://*.youtube.com/*
 // @exclude      *://*.youtube.com/feed/subscriptions
+// @exclude      *://*.youtube.com/feed/playlists
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @homepage     https://github.com/GauravScripts/youtube-low-view-filter
 // @downloadURL  https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
