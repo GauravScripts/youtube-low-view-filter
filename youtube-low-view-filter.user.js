@@ -222,7 +222,7 @@ function UpdateVideoFiltering()
                 
                 // If not found, try the new metadata structure
                 if (!videoViews) {
-                    let metadataElements = videosList[i].getElementsByClassName("yt-content-metadata-view-model-wiz__metadata-text");
+                    let metadataElements = videosList[i].getElementsByClassName("yt-content-metadata-view-model__metadata-text");
                     for (let j = 0; j < metadataElements.length; j++) {
                         let text = metadataElements[j].innerText;
                         if (text && text.includes('views')) {
@@ -287,41 +287,41 @@ function UpdateVideoFiltering()
                         video.remove();
                     }
                 });
+            }
 
-                // Handle new YouTube layout with yt-lockup-view-model
-                videosList = document.querySelectorAll('yt-lockup-view-model');
-                videosList.forEach(video => {
-                    // Look for view count in the new structure
-                    let viewsElement = video.querySelector('.yt-content-metadata-view-model-wiz__metadata-text');
-                    if (viewsElement) {
-                        // Check if this element contains view count (usually has "views" or numbers)
-                        let viewText = viewsElement.innerText;
-                        if (viewText && (viewText.includes('views') || viewText.includes('lakh') || viewText.includes('crore') || /\d/.test(viewText))) {
-                            if (IsBadVideo(viewsElement) || IsMembersOnly(video)) {
-                                video.remove();
-                            }
+            // NEW YOUTUBE LAYOUT HANDLING - Handle new YouTube layout with yt-lockup-view-model
+            videosList = document.querySelectorAll('yt-lockup-view-model');
+            videosList.forEach(video => {
+                // Look for view count in the new structure
+                let viewsElements = video.querySelectorAll('.yt-core-attributed-string');
+                let viewsElement = null;
+
+                for (let i = 0; i < viewsElements.length; i++) {
+                    let text = viewsElements[i].innerText;
+                    if (text && text.includes('views')) {
+                        viewsElement = viewsElements[i];
+                        break;
+                    }
+                }
+
+                // If no specific views element found, try to find it in metadata rows
+                if (!viewsElement) {
+                    let metadataRows = video.querySelectorAll('.yt-content-metadata-view-model__metadata-row');
+                    for (let i = 0; i < metadataRows.length; i++) {
+                        let text = metadataRows[i].innerText;
+                        if (text && text.includes('views')) {
+                            viewsElement = metadataRows[i];
+                            break;
                         }
                     }
-                });
+                }
 
-                // Handle yt-content-metadata-view-model structure
-                videosList = document.querySelectorAll('yt-content-metadata-view-model');
-                videosList.forEach(metadataContainer => {
-                    let viewsElements = metadataContainer.querySelectorAll('.yt-content-metadata-view-model-wiz__metadata-text');
-                    viewsElements.forEach(viewsElement => {
-                        let viewText = viewsElement.innerText;
-                        if (viewText && (viewText.includes('views') || viewText.includes('lakh') || viewText.includes('crore') || /\d+\s*views/i.test(viewText))) {
-                            if (IsBadVideo(viewsElement)) {
-                                // Find the parent video container
-                                let parentVideo = viewsElement.closest('yt-lockup-view-model');
-                                if (parentVideo) {
-                                    parentVideo.remove();
-                                }
-                            }
-                        }
-                    });
-                });
-            }
+                if (viewsElement && IsBadVideo(viewsElement)) {
+                    // Remove only the yt-lockup-view-model node, not the whole section
+                    video.remove();
+                    console.log("Removed video with low views: " + (viewsElement ? viewsElement.innerText : "unknown views"));
+                }
+            });
         }
     }
 }
