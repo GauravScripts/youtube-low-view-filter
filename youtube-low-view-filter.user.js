@@ -5,8 +5,20 @@
 // @description  Removes YouTube videos with fewer than 999 views from recommendations. Screenshot: https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/img_1.png
 // @author       Gaurav Gupta
 // @match        *://*.youtube.com/*
-// @exclude      *://*.youtube.com/feed/subscriptions
-// @exclude      *://*.youtube.com/feed/playlists
+// @exclude      *://*.youtube.com/feed/subscriptions*
+// @exclude      *://*.youtube.com/feed/history*
+// @exclude      *://*.youtube.com/feed/playlists*
+// @exclude      *://*.youtube.com/feed/library*
+// @exclude      *://*.youtube.com/feed/you*
+// @exclude      *://*.youtube.com/channel/*
+// @exclude      *://*.youtube.com/@*/featured*
+// @exclude      *://*.youtube.com/@*/videos*
+// @exclude      *://*.youtube.com/@*/shorts*
+// @exclude      *://*.youtube.com/@*/streams*
+// @exclude      *://*.youtube.com/@*/playlists*
+// @exclude      *://*.youtube.com/@*/community*
+// @exclude      *://*.youtube.com/@*/channels*
+// @exclude      *://*.youtube.com/@*/about*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @homepage     https://github.com/GauravScripts/youtube-low-view-filter
 // @downloadURL  https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
