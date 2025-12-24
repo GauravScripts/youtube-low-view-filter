@@ -1,31 +1,23 @@
 // ==UserScript==
 // @name         YouTube Crappy Videos Remover from Recommendations
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  Removes YouTube videos with fewer than 999 views from recommendations.
 // @author       Gaurav Gupta
 // @match        *://*.youtube.com/*
-// @exclude      *://*.youtube.com/feed/subscriptions*
-// @exclude      *://*.youtube.com/feed/history*
-// @exclude      *://*.youtube.com/feed/playlists*
-// @exclude      *://*.youtube.com/feed/library*
-// @exclude      *://*.youtube.com/feed/you*
+// @exclude      *://*.youtube.com/feed
+// @exclude      *://*.youtube.com/feed/
+// @exclude      *://*.youtube.com/feed/*
+// @exclude      *://*.youtube.com/feed?*
+// @exclude      *://*.youtube.com/feed/playlists
+// @exclude      *://*.youtube.com/feed/playlists/*
 // @exclude      *://*.youtube.com/channel/*
-// @exclude      *://*.youtube.com/@*/featured*
-// @exclude      *://*.youtube.com/@*/videos*
-// @exclude      *://*.youtube.com/@*/shorts*
-// @exclude      *://*.youtube.com/@*/streams*
-// @exclude      *://*.youtube.com/@*/playlists*
-// @exclude      *://*.youtube.com/@*/community*
-// @exclude      *://*.youtube.com/@*/channels*
-// @exclude      *://*.youtube.com/@*/about*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @homepage     https://github.com/GauravScripts/youtube-low-view-filter
 // @downloadURL  https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
 // @updateURL    https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
 // @grant        none
 // ==/UserScript==
-
 
 // ---------------------------------------------------------------------------
 let g_VideosFiltering = true;
@@ -47,71 +39,75 @@ function IsWatch() {
     return location.pathname.startsWith("/watch");
 }
 
-function IsNumber(i) {
-    return (i >= '0' && i <= '9');
-}
+function ParseViewCount(text) {
+    if (!text || text.length === 0) {
+        return 0;
+    }
 
-function IsSpace(i) {
-    return i == ' ';
-}
+    // Remove "views" or "view" text and extra spaces
+    text = text.toLowerCase().replace(/views?/gi, '').trim();
 
-function IsSeparator(i) {
-    return i == '.' || i == ',';
+    // Handle Indian number system
+    if (text.includes('lakh')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return num * 100000; // 1 lakh = 100,000
+    }
+    if (text.includes('crore')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return num * 10000000; // 1 crore = 10,000,000
+    }
+
+    // Handle K, M, B suffixes
+    if (text.includes('k')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return num * 1000;
+    }
+    if (text.includes('m') || text.includes('million')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return num * 1000000;
+    }
+    if (text.includes('b') || text.includes('billion')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return num * 1000000000;
+    }
+
+    // Handle plain numbers with separators (commas, periods, spaces)
+    let cleanedText = text.replace(/[,.\s]/g, '');
+    let num = parseInt(cleanedText);
+
+    if (!isNaN(num)) {
+        return num;
+    }
+
+    return 0;
 }
 
 function IsBadVideo(videoViews) {
     if (!videoViews) {
+        console.log("~BadVideo: No view element found");
         return true;
     }
 
     let text = videoViews.innerText || videoViews.textContent;
-    if (!text || text.length == 0) {
+    if (!text || text.length === 0) {
+        console.log("~BadVideo: Empty text");
         return true;
     }
 
-    if (text.includes('lakh') || text.includes('crore')) {
-        return false;
+    let viewCount = ParseViewCount(text);
+
+    // If we couldn't parse any number, consider it bad
+    if (viewCount === 0) {
+        console.log("~BadVideo: Could not parse view count from '" + text + "'");
+        return true;
     }
 
-    if (text.includes('K') || text.includes('M') || text.includes('B') || text.includes('million') || text.includes('billion')) {
-        return false;
+    let isBad = viewCount < 1000;
+    if (isBad) {
+        console.log("~BadVideo: '" + text + "' = " + viewCount + " views (< 1000)");
     }
 
-    let numbersExists = false
-    for (let i = 0; i < text.length; i++) {
-        if (IsNumber(text[i])) {
-            numbersExists = true;
-            break;
-        }
-    }
-
-    let twoWordsExists = false
-    for (let i = 0; i < text.length - 2; i++) {
-        if (!IsNumber(text[i]) && IsSpace(text[i + 1]) && !IsNumber(text[i + 2])) {
-            twoWordsExists = true;
-            break;
-        }
-
-        if (IsNumber(text[i]) && IsSeparator(text[i + 1]) && IsNumber(text[i + 2])) {
-            twoWordsExists = true;
-            break;
-        }
-    }
-
-    let viewMatch = text.match(/(\d+(?:[.,]\d+)*)\s*views?/i);
-    if (viewMatch) {
-        let viewCount = parseInt(viewMatch[1].replace(/[.,]/g, ''));
-        if (viewCount > 999) {
-            return false;
-        }
-    }
-
-    let badVideo = !numbersExists || !twoWordsExists;
-    if (badVideo) {
-        console.log("~BadVideo: '" + text + "'");
-    }
-
-    return badVideo;
+    return isBad;
 }
 
 function IsMembersOnly(videoElement) {
@@ -135,27 +131,26 @@ function IsMembersOnly(videoElement) {
 }
 
 function IsBadShortVideo(videoViews) {
-
     if (!videoViews) {
         return false;
     }
 
     let text = videoViews.innerText;
-    if (text.length == 0) {
+    if (text.length === 0) {
         return false;
     }
 
     for (let i = 0; i < text.length; i++) {
-        // nbsp symbol is found
-        if (text[i] == '\xa0') {
+        if (text[i] === '\xa0') {
             return false;
         }
     }
 
-    console.log("~BadShortVideo: '" + text + "'"); // debug
+    console.log("~BadShortVideo: '" + text + "'");
     return true;
 }
 
+// ---------------------------------------------------------------------------
 function UpdateVideoFiltering() {
     let videosList;
 
@@ -174,12 +169,50 @@ function UpdateVideoFiltering() {
                 let videoViews = videosList[i].getElementsByClassName("yt-spec-button-shape-with-label__label")[0];
 
                 if (IsBadShortVideo(videoViews)) {
-                    document.getElementsByClassName("navigation-button style-scope ytd-shorts")[1].getElementsByClassName("yt-spec-touch-feedback-shape__fill")[0].click(); // click to next video button (is it even stable lol?)
+                    document.getElementsByClassName("navigation-button style-scope ytd-shorts")[1].getElementsByClassName("yt-spec-touch-feedback-shape__fill")[0].click();
                 }
             }
         }
     } else {
         if (g_VideosFiltering) {
+            // Handle NEW YOUTUBE LAYOUT FIRST - yt-lockup-view-model structure
+            let lockupVideos = document.querySelectorAll('yt-lockup-view-model');
+            lockupVideos.forEach(video => {
+                let viewsElement = null;
+
+                // Find the metadata container
+                const metadataContainer = video.querySelector('yt-content-metadata-view-model');
+                if (metadataContainer) {
+                    // Look through all metadata rows
+                    const metadataRows = metadataContainer.querySelectorAll('.yt-content-metadata-view-model__metadata-row');
+
+                    for (let row of metadataRows) {
+                        const spans = row.querySelectorAll('span[role="text"], span.yt-core-attributed-string');
+                        for (let span of spans) {
+                            let text = span.textContent || span.innerText;
+                            // Match patterns like "434 views", "1.2K views", etc.
+                            if (text && /\d+.*views?/i.test(text)) {
+                                viewsElement = span;
+                                break;
+                            }
+                        }
+                        if (viewsElement) break;
+                    }
+                }
+
+                // If views element found, check if it's a bad video
+                if (viewsElement && IsBadVideo(viewsElement)) {
+                    // Find the parent rich item renderer to remove
+                    const parentRenderer = video.closest('ytd-rich-item-renderer');
+                    if (parentRenderer) {
+                        parentRenderer.remove();
+                        console.log("Removed video (New Layout): " + viewsElement.innerText);
+                    }
+                }
+            });
+
+            // Handle OLD LAYOUTS as fallback
+            // Compact renderer (watch page sidebar)
             videosList = document.getElementsByClassName("style-scope ytd-compact-video-renderer");
             for (let i = 0; i < videosList.length; i++) {
                 let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
@@ -189,9 +222,10 @@ function UpdateVideoFiltering() {
                 }
             }
 
+            // Rich item renderer (home page - old structure)
             videosList = document.getElementsByClassName("style-scope ytd-rich-item-renderer");
             for (let i = 0; i < videosList.length; i++) {
-                if (videosList[i].id != "content") {
+                if (videosList[i].id !== "content") {
                     continue;
                 }
 
@@ -212,6 +246,8 @@ function UpdateVideoFiltering() {
                     videosList[i].parentElement.remove();
                 }
             }
+
+            // Rich grid media
             videosList = document.querySelectorAll('ytd-rich-grid-media');
             for (let i = 0; i < videosList.length; i++) {
                 let videoViews = videosList[i].querySelector('.inline-metadata-item.style-scope.ytd-video-meta-block');
@@ -220,13 +256,14 @@ function UpdateVideoFiltering() {
                     videosList[i].remove();
                 }
             }
+
+            // Watch page filtering
             if (IsWatch()) {
                 videosList = document.getElementsByClassName("style-scope ytd-video-preview");
                 for (let i = 0; i < videosList.length; i++) {
                     let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
 
                     if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
-                        // Find the parent container to remove
                         let parentToRemove = videosList[i].closest('ytd-compact-video-renderer, ytd-video-preview');
                         if (parentToRemove) {
                             parentToRemove.remove();
@@ -234,19 +271,6 @@ function UpdateVideoFiltering() {
                     }
                 }
 
-                videosList = document.getElementsByClassName("style-scope ytd-compact-video-renderer");
-                for (let i = 0; i < videosList.length; i++) {
-                    let videoViews = videosList[i].getElementsByClassName("inline-metadata-item style-scope ytd-video-meta-block")[0];
-
-                    if (IsBadVideo(videoViews) || IsMembersOnly(videosList[i])) {
-                        let parentToRemove = videosList[i].closest('ytd-compact-video-renderer');
-                        if (parentToRemove) {
-                            parentToRemove.remove();
-                        }
-                    }
-                }
-
-                // Filter videos in the comments section area (sometimes videos appear there)
                 videosList = document.querySelectorAll('ytd-compact-video-renderer');
                 videosList.forEach(video => {
                     let videoViews = video.querySelector('.inline-metadata-item.style-scope.ytd-video-meta-block');
@@ -255,26 +279,6 @@ function UpdateVideoFiltering() {
                     }
                 });
             }
-
-            let lockupVideos = document.querySelectorAll('yt-lockup-view-model');
-            lockupVideos.forEach(video => {
-                let viewsElement = null;
-
-                const metadataTexts = video.querySelectorAll('.yt-content-metadata-view-model__metadata-text, .yt-core-attributed-string');
-
-                for (let i = 0; i < metadataTexts.length; i++) {
-                    let text = metadataTexts[i].textContent || metadataTexts[i].innerText;
-                    if (text && /\d.*views/.test(text)) {
-                        viewsElement = metadataTexts[i];
-                        break;
-                    }
-                }
-
-                if (viewsElement && IsBadVideo(viewsElement)) {
-                    video.remove();
-                    console.log("Removed video with low views (New Layout): " + viewsElement.innerText);
-                }
-            });
         }
     }
 }
@@ -308,7 +312,6 @@ window.addEventListener("click", (event) => {
     }
 });
 
-// Additional event listener for watch page content changes
 let lastUrl = location.href;
 new MutationObserver(() => {
     const url = location.href;
@@ -318,9 +321,8 @@ new MutationObserver(() => {
             setTimeout(UpdateVideoFiltering, 500);
         }
     }
-}).observe(document, {subtree: true, childList: true});
+}).observe(document, { subtree: true, childList: true });
 
-// Enhanced filtering for dynamically loaded content on watch pages
 if (typeof window.ytInitialData !== 'undefined') {
     const observer = new MutationObserver((mutations) => {
         if (IsWatch()) {
