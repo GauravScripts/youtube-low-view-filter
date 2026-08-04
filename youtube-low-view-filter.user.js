@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Crappy Videos Remover from Recommendations
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      4.0
 // @description  Removes YouTube videos with fewer than 999 views from recommendations.
 // @author       Gaurav Gupta
 // @match        *://*.youtube.com/*
@@ -103,6 +103,38 @@ function ParseViewCount(text) {
     return -1;
 }
 
+// Shorts view-count buttons show a bare number ("132", "4.5K") with no
+// "views" word attached, so they need their own lightweight parser.
+function ParseShortsViewCount(text) {
+    if (!text || text.length === 0) {
+        return -1;
+    }
+
+    text = text.replace(/\u00a0/g, ' ').toLowerCase().trim();
+
+    if (!/[0-9]/.test(text)) {
+        return -1;
+    }
+
+    if (text.includes('k')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return isNaN(num) ? -1 : num * 1000;
+    }
+    if (text.includes('m')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return isNaN(num) ? -1 : num * 1000000;
+    }
+    if (text.includes('b')) {
+        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
+        return isNaN(num) ? -1 : num * 1000000000;
+    }
+
+    let cleanedText = text.replace(/[,\.\s]/g, '');
+    let num = parseInt(cleanedText);
+
+    return isNaN(num) ? -1 : num;
+}
+
 function IsBadVideo(videoViews) {
     // IMPORTANT: Missing/empty views is common on new YouTube layouts (async render).
     // Missing views must NOT be treated as bad, otherwise everything gets removed.
@@ -125,6 +157,50 @@ function IsBadVideo(videoViews) {
     return viewCount < MIN_VIEWS_TO_KEEP;
 }
 
+// NOTE: This was called throughout the script but never defined, which threw
+// "IsMembersOnly is not defined" and silently killed the rest of a filtering
+// pass every time a sidebar/grid/rich-item video was checked. Fixed here.
+function IsMembersOnly(cardEl) {
+    if (!cardEl) {
+        return false;
+    }
+
+    try {
+        const badgeEls = cardEl.querySelectorAll('badge-shape, [aria-label], .badge-style-type-members-only');
+        for (let i = 0; i < badgeEls.length; i++) {
+            const t = (badgeEls[i].textContent || badgeEls[i].getAttribute('aria-label') || '');
+            if (/members[\s-]?only/i.test(t)) {
+                return true;
+            }
+        }
+    } catch (e) {
+        // ignore, assume not members-only
+    }
+
+    return false;
+}
+
+// NOTE: Also called but never defined — same crash-and-abort problem inside
+// the Shorts branch. Fixed here.
+function IsBadShortVideo(videoViewsEl) {
+    if (!videoViewsEl) {
+        return false;
+    }
+
+    let text = videoViewsEl.innerText || videoViewsEl.textContent;
+    if (!text || text.length === 0) {
+        return false;
+    }
+
+    let count = ParseShortsViewCount(text);
+
+    if (count === -1) {
+        return false;
+    }
+
+    return count < MIN_VIEWS_TO_KEEP;
+}
+
 function FindViewElementInCard(cardEl) {
     if (!cardEl) {
         return null;
@@ -136,8 +212,11 @@ function FindViewElementInCard(cardEl) {
         return el;
     }
 
-    // 2) New metadata model (your HTML snippet shows these)
-    let metaTexts = cardEl.querySelectorAll('.yt-content-metadata-view-model__metadata-text, span[role="text"], span.yt-core-attributed-string');
+    // 2) New metadata model. Includes an attribute-contains selector so
+    //    future camelCase/BEM class-name churn doesn't silently break this.
+    let metaTexts = cardEl.querySelectorAll(
+        '.yt-content-metadata-view-model__metadata-text, [class*="MetadataText"], span[role="text"], span.yt-core-attributed-string, [class*="AttributedString"]'
+    );
     for (let i = 0; i < metaTexts.length; i++) {
         const t = (metaTexts[i].textContent || metaTexts[i].innerText || '').trim();
         if (t && /\bviews?\b/i.test(t) && /\d/.test(t)) {
@@ -154,6 +233,13 @@ function FindViewElementInCard(cardEl) {
         }
     }
 
+    // 4) Last-resort fallback: scan the card's own text for a "<number> views" pattern.
+    const allText = cardEl.innerText || cardEl.textContent || '';
+    const match = allText.match(/\b(no views|[\d.,]+\s?(?:k|m|b|lakh|crore)?\s+views?)\b/i);
+    if (match) {
+        return { textContent: match[0], innerText: match[0] };
+    }
+
     return null;
 }
 
@@ -167,6 +253,7 @@ function RemoveVideoCard(cardEl, reason) {
         cardEl.closest('ytd-rich-item-renderer') ||
         cardEl.closest('ytd-rich-grid-media') ||
         cardEl.closest('ytd-compact-video-renderer') ||
+        cardEl.closest('ytd-video-renderer') ||
         cardEl;
 
     try {
@@ -195,10 +282,14 @@ function UpdateVideoFiltering() {
                     continue;
                 }
 
-                let videoViews = videosList[i].getElementsByClassName("yt-spec-button-shape-with-label__label")[0];
+                try {
+                    let videoViews = videosList[i].getElementsByClassName("yt-spec-button-shape-with-label__label")[0];
 
-                if (IsBadShortVideo(videoViews)) {
-                    document.getElementsByClassName("navigation-button style-scope ytd-shorts")[1].getElementsByClassName("yt-spec-touch-feedback-shape__fill")[0].click();
+                    if (IsBadShortVideo(videoViews)) {
+                        document.getElementsByClassName("navigation-button style-scope ytd-shorts")[1].getElementsByClassName("yt-spec-touch-feedback-shape__fill")[0].click();
+                    }
+                } catch (e) {
+                    console.log('Shorts filtering error:', e);
                 }
             }
         }
@@ -208,83 +299,123 @@ function UpdateVideoFiltering() {
             // Also covers many new watch/sidebar layouts.
             let lockupVideos = document.querySelectorAll('yt-lockup-view-model');
             lockupVideos.forEach(video => {
-                if (video.getAttribute('data-lowview-checked') === '1') {
-                    return;
-                }
+                try {
+                    if (video.getAttribute('data-lowview-checked') === '1') {
+                        return;
+                    }
 
-                const viewsElement = FindViewElementInCard(video);
-                const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                const count = ParseViewCount(viewText);
+                    const viewsElement = FindViewElementInCard(video);
+                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
+                    const count = ParseViewCount(viewText);
 
-                if (count !== -1) {
-                    video.setAttribute('data-lowview-checked', '1');
-                }
+                    if (count !== -1) {
+                        video.setAttribute('data-lowview-checked', '1');
+                    }
 
-                if (count !== -1 && count < MIN_VIEWS_TO_KEEP) {
-                    RemoveVideoCard(video, `new-layout: ${viewText}`);
+                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
+                        RemoveVideoCard(video, `new-layout: ${viewText}`);
+                    }
+                } catch (e) {
+                    console.log('new-layout filtering error:', e);
                 }
             });
 
             // WATCH SIDEBAR (tight selector)
             document.querySelectorAll('ytd-compact-video-renderer').forEach(video => {
-                if (video.getAttribute('data-lowview-checked') === '1') {
-                    return;
-                }
+                try {
+                    if (video.getAttribute('data-lowview-checked') === '1') {
+                        return;
+                    }
 
-                const viewsElement = FindViewElementInCard(video);
-                const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                const count = ParseViewCount(viewText);
+                    const viewsElement = FindViewElementInCard(video);
+                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
+                    const count = ParseViewCount(viewText);
 
-                if (count !== -1) {
-                    video.setAttribute('data-lowview-checked', '1');
-                }
+                    if (count !== -1) {
+                        video.setAttribute('data-lowview-checked', '1');
+                    }
 
-                if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                    RemoveVideoCard(video, `sidebar: ${viewText}`);
+                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
+                        RemoveVideoCard(video, `sidebar: ${viewText}`);
+                    }
+                } catch (e) {
+                    console.log('sidebar filtering error:', e);
                 }
             });
 
             // HOME GRID (tight selector)
             document.querySelectorAll('ytd-rich-grid-media').forEach(video => {
-                if (video.getAttribute('data-lowview-checked') === '1') {
-                    return;
-                }
+                try {
+                    if (video.getAttribute('data-lowview-checked') === '1') {
+                        return;
+                    }
 
-                const viewsElement = FindViewElementInCard(video);
-                const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                const count = ParseViewCount(viewText);
+                    const viewsElement = FindViewElementInCard(video);
+                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
+                    const count = ParseViewCount(viewText);
 
-                if (count !== -1) {
-                    video.setAttribute('data-lowview-checked', '1');
-                }
+                    if (count !== -1) {
+                        video.setAttribute('data-lowview-checked', '1');
+                    }
 
-                if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                    RemoveVideoCard(video, `home-grid: ${viewText}`);
+                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
+                        RemoveVideoCard(video, `home-grid: ${viewText}`);
+                    }
+                } catch (e) {
+                    console.log('home-grid filtering error:', e);
                 }
             });
 
             // Legacy rich item renderer (some pages still use it)
             document.querySelectorAll('ytd-rich-item-renderer').forEach(video => {
-                // Only handle actual video items (avoid shelves/ads/etc.)
-                const hasVideo = video.querySelector('a[href^="/watch"], ytd-thumbnail');
-                if (!hasVideo) {
-                    return;
+                try {
+                    // Only handle actual video items (avoid shelves/ads/etc.)
+                    const hasVideo = video.querySelector('a[href^="/watch"], ytd-thumbnail');
+                    if (!hasVideo) {
+                        return;
+                    }
+
+                    if (video.getAttribute('data-lowview-checked') === '1') {
+                        return;
+                    }
+
+                    const viewsElement = FindViewElementInCard(video);
+                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
+                    const count = ParseViewCount(viewText);
+
+                    if (count !== -1) {
+                        video.setAttribute('data-lowview-checked', '1');
+                    }
+
+                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
+                        RemoveVideoCard(video, `rich-item: ${viewText}`);
+                    }
+                } catch (e) {
+                    console.log('rich-item filtering error:', e);
                 }
+            });
 
-                if (video.getAttribute('data-lowview-checked') === '1') {
-                    return;
-                }
+            // Search results (ytd-video-renderer) — new layout also nests
+            // yt-lockup-view-model here but keep a direct fallback too.
+            document.querySelectorAll('ytd-video-renderer').forEach(video => {
+                try {
+                    if (video.getAttribute('data-lowview-checked') === '1') {
+                        return;
+                    }
 
-                const viewsElement = FindViewElementInCard(video);
-                const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                const count = ParseViewCount(viewText);
+                    const viewsElement = FindViewElementInCard(video);
+                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
+                    const count = ParseViewCount(viewText);
 
-                if (count !== -1) {
-                    video.setAttribute('data-lowview-checked', '1');
-                }
+                    if (count !== -1) {
+                        video.setAttribute('data-lowview-checked', '1');
+                    }
 
-                if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                    RemoveVideoCard(video, `rich-item: ${viewText}`);
+                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
+                        RemoveVideoCard(video, `search-result: ${viewText}`);
+                    }
+                } catch (e) {
+                    console.log('search-result filtering error:', e);
                 }
             });
 
