@@ -1,487 +1,245 @@
 // ==UserScript==
-// @name         YouTube Crappy Videos Remover from Recommendations
+// @name         YouTube Low-View Filter
 // @namespace    http://tampermonkey.net/
-// @version      4.0
-// @description  Removes YouTube videos with fewer than 999 views from recommendations.
-// @author       Gaurav Gupta
-// @match        *://*.youtube.com/*
-// @exclude      *://*.youtube.com/feed
-// @exclude      *://*.youtube.com/feed/
-// @exclude      *://*.youtube.com/feed/*
-// @exclude      *://*.youtube.com/feed?*
-// @exclude      *://*.youtube.com/feed/playlists
-// @exclude      *://*.youtube.com/feed/playlists/*
-// @exclude      *://*.youtube.com/channel/*
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
-// @homepage     https://github.com/GauravScripts/youtube-low-view-filter
-// @downloadURL  https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
-// @updateURL    https://raw.githubusercontent.com/GauravScripts/youtube-low-view-filter/master/youtube-low-view-filter.user.js
+// @version      2.1
+// @description  Remove YouTube videos below a view-count threshold (handles modern 2024-2026 layouts)
+// @author       You
+// @match        https://www.youtube.com/*
 // @grant        none
 // ==/UserScript==
 
-// ---------------------------------------------------------------------------
-let g_VideosFiltering = true;
-let g_ShortsFiltering = true;
+(function() {
+    'use strict';
 
-// How many views a video must have to be kept (>= threshold)
-const MIN_VIEWS_TO_KEEP = 1000;
+    /* -------------------- CONFIG -------------------- */
+    const MIN_VIEWS_TO_KEEP = 999;   // Videos with fewer views are hidden
+    const DEBUG = true;              // Set to false to disable console logs
 
-function IsSubscriptions() {
-    return location.pathname.startsWith("/feed/subscriptions");
-}
-
-function IsChannel() {
-    return location.pathname.startsWith("/@");
-}
-
-function IsShorts() {
-    return location.pathname.startsWith("/shorts");
-}
-
-function IsWatch() {
-    return location.pathname.startsWith("/watch");
-}
-
-function ParseViewCount(text) {
-    if (!text || text.length === 0) {
-        return -1;
+    /* -------------------- UTILS -------------------- */
+    function log(...args) {
+        if (DEBUG) console.log('[YT-Filter]', ...args);
     }
 
-    // Normalize non-breaking space and lower-case
-    text = text.replace(/\u00a0/g, ' ');
-    text = text.toLowerCase().trim();
+    /**
+     * Parse a view-count string into a number.
+     * Handles: "737 views", "1.2K views", "1,234", "No views", "0 views", "2.5M", etc.
+     */
+    function parseViewCount(text) {
+        if (!text) return -1;
+        text = text.trim();
 
-    // Some labels are non-numeric (“scheduled”, “premieres”, “live”, etc.)
-    // Treat those as unknown so we don't remove everything by mistake.
-    if (!/[0-9]/.test(text)) {
-        // Special-case “no views” => 0
-        if (text.includes('no views') || text === 'no') {
-            return 0;
+        // "No views" / "0 views"
+        if (/^\s*no views?\s*$/i.test(text)) return 0;
+
+        // Extract number + optional K/M/B suffix, followed by optional "view(s)"
+        const m = text.match(/([\d,.]+)\s*([KMBkmb]?)\s*(?:view|views)?/i);
+        if (!m) return -1;
+
+        let numStr = m[1].replace(/,/g, ''); // strip commas
+        let suffix = m[2].toUpperCase();
+        let num = parseFloat(numStr);
+
+        if (isNaN(num)) return -1;
+
+        switch (suffix) {
+            case 'K': num *= 1_000; break;
+            case 'M': num *= 1_000_000; break;
+            case 'B': num *= 1_000_000_000; break;
         }
-        return -1;
+        return Math.floor(num);
     }
 
-    // Remove "views" or "view" text and extra spaces
-    text = text.replace(/views?/gi, '').trim();
-
-    if (text.length === 0) {
-        return -1;
-    }
-
-    // Handle Indian number system
-    if (text.includes('lakh')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 100000; // 1 lakh = 100,000
-    }
-    if (text.includes('crore')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 10000000; // 1 crore = 10,000,000
-    }
-
-    // Handle K, M, B suffixes
-    if (text.includes('k')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 1000;
-    }
-    if (text.includes('m') || text.includes('million')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 1000000;
-    }
-    if (text.includes('b') || text.includes('billion')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 1000000000;
-    }
-
-    // Handle plain numbers with separators (commas, periods, spaces)
-    let cleanedText = text.replace(/[,\.\s]/g, '');
-    let num = parseInt(cleanedText);
-
-    if (!isNaN(num)) {
-        return num;
-    }
-
-    return -1;
-}
-
-// Shorts view-count buttons show a bare number ("132", "4.5K") with no
-// "views" word attached, so they need their own lightweight parser.
-function ParseShortsViewCount(text) {
-    if (!text || text.length === 0) {
-        return -1;
-    }
-
-    text = text.replace(/\u00a0/g, ' ').toLowerCase().trim();
-
-    if (!/[0-9]/.test(text)) {
-        return -1;
-    }
-
-    if (text.includes('k')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 1000;
-    }
-    if (text.includes('m')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 1000000;
-    }
-    if (text.includes('b')) {
-        let num = parseFloat(text.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? -1 : num * 1000000000;
-    }
-
-    let cleanedText = text.replace(/[,\.\s]/g, '');
-    let num = parseInt(cleanedText);
-
-    return isNaN(num) ? -1 : num;
-}
-
-function IsBadVideo(videoViews) {
-    // IMPORTANT: Missing/empty views is common on new YouTube layouts (async render).
-    // Missing views must NOT be treated as bad, otherwise everything gets removed.
-    if (!videoViews) {
-        return false;
-    }
-
-    let text = videoViews.innerText || videoViews.textContent;
-    if (!text || text.length === 0) {
-        return false;
-    }
-
-    let viewCount = ParseViewCount(text);
-
-    // If we couldn't parse any number, assume it's NOT bad (safe default)
-    if (viewCount === -1) {
-        return false;
-    }
-
-    return viewCount < MIN_VIEWS_TO_KEEP;
-}
-
-// NOTE: This was called throughout the script but never defined, which threw
-// "IsMembersOnly is not defined" and silently killed the rest of a filtering
-// pass every time a sidebar/grid/rich-item video was checked. Fixed here.
-function IsMembersOnly(cardEl) {
-    if (!cardEl) {
-        return false;
-    }
-
-    try {
-        const badgeEls = cardEl.querySelectorAll('badge-shape, [aria-label], .badge-style-type-members-only');
-        for (let i = 0; i < badgeEls.length; i++) {
-            const t = (badgeEls[i].textContent || badgeEls[i].getAttribute('aria-label') || '');
-            if (/members[\s-]?only/i.test(t)) {
-                return true;
+    /**
+     * Try several strategies to find the view count inside a video card.
+     * YouTube A/B tests layouts constantly, so we use multiple fallbacks.
+     */
+    function getViewCount(video) {
+        // ── Strategy 1: aria-label attributes often hold the raw count ──
+        const ariaEls = video.querySelectorAll('[aria-label]');
+        for (const el of ariaEls) {
+            const label = el.getAttribute('aria-label');
+            if (label && /\b\d[\d,.]*\s*[KMBkmb]?\s*views?\b/i.test(label)) {
+                const c = parseViewCount(label);
+                if (c !== -1) return c;
             }
         }
-    } catch (e) {
-        // ignore, assume not members-only
-    }
 
-    return false;
-}
-
-// NOTE: Also called but never defined — same crash-and-abort problem inside
-// the Shorts branch. Fixed here.
-function IsBadShortVideo(videoViewsEl) {
-    if (!videoViewsEl) {
-        return false;
-    }
-
-    let text = videoViewsEl.innerText || videoViewsEl.textContent;
-    if (!text || text.length === 0) {
-        return false;
-    }
-
-    let count = ParseShortsViewCount(text);
-
-    if (count === -1) {
-        return false;
-    }
-
-    return count < MIN_VIEWS_TO_KEEP;
-}
-
-function FindViewElementInCard(cardEl) {
-    if (!cardEl) {
-        return null;
-    }
-
-    // 1) Old layouts (home/search/watch sidebar)
-    let el = cardEl.querySelector('.inline-metadata-item.style-scope.ytd-video-meta-block');
-    if (el && /views?/i.test(el.textContent || '')) {
-        return el;
-    }
-
-    // 2) New metadata model. Includes an attribute-contains selector so
-    //    future camelCase/BEM class-name churn doesn't silently break this.
-    let metaTexts = cardEl.querySelectorAll(
-        '.yt-content-metadata-view-model__metadata-text, [class*="MetadataText"], span[role="text"], span.yt-core-attributed-string, [class*="AttributedString"]'
-    );
-    for (let i = 0; i < metaTexts.length; i++) {
-        const t = (metaTexts[i].textContent || metaTexts[i].innerText || '').trim();
-        if (t && /\bviews?\b/i.test(t) && /\d/.test(t)) {
-            return metaTexts[i];
-        }
-    }
-
-    // 3) Fallback: parse from aria-label on the title link (often includes “X views”)
-    const a = cardEl.querySelector('a[aria-label][href^="/watch"], a#video-title[aria-label]');
-    if (a) {
-        const aria = a.getAttribute('aria-label') || '';
-        if (/\bviews?\b/i.test(aria) && /\d/.test(aria)) {
-            return a;
-        }
-    }
-
-    // 4) Last-resort fallback: scan the card's own text for a "<number> views" pattern.
-    const allText = cardEl.innerText || cardEl.textContent || '';
-    const match = allText.match(/\b(no views|[\d.,]+\s?(?:k|m|b|lakh|crore)?\s+views?)\b/i);
-    if (match) {
-        return { textContent: match[0], innerText: match[0] };
-    }
-
-    return null;
-}
-
-function RemoveVideoCard(cardEl, reason) {
-    if (!cardEl) {
-        return;
-    }
-
-    // Remove the right container for each layout.
-    const toRemove =
-        cardEl.closest('ytd-rich-item-renderer') ||
-        cardEl.closest('ytd-rich-grid-media') ||
-        cardEl.closest('ytd-compact-video-renderer') ||
-        cardEl.closest('ytd-video-renderer') ||
-        cardEl;
-
-    try {
-        toRemove.remove();
-        if (reason) {
-            console.log('Removed video:', reason);
-        }
-    } catch (e) {
-        // ignore
-    }
-}
-
-// ---------------------------------------------------------------------------
-function UpdateVideoFiltering() {
-    let videosList;
-
-    if (IsChannel() || IsSubscriptions()) {
-        return;
-    }
-
-    if (IsShorts()) {
-        if (g_ShortsFiltering) {
-            videosList = document.getElementsByClassName("reel-video-in-sequence style-scope ytd-shorts");
-            for (let i = 0; i < videosList.length; i++) {
-                if (!videosList[i].isActive) {
-                    continue;
-                }
-
-                try {
-                    let videoViews = videosList[i].getElementsByClassName("yt-spec-button-shape-with-label__label")[0];
-
-                    if (IsBadShortVideo(videoViews)) {
-                        document.getElementsByClassName("navigation-button style-scope ytd-shorts")[1].getElementsByClassName("yt-spec-touch-feedback-shape__fill")[0].click();
-                    }
-                } catch (e) {
-                    console.log('Shorts filtering error:', e);
-                }
+        // ── Strategy 2: new 2024-2026 metadata text classes ──
+        const metaTexts = video.querySelectorAll(
+            '.ytContentMetadataViewModelMetadataText, ' +
+            '.yt-lockup-metadata-view-model .ytAttributedStringHost'
+        );
+        for (const el of metaTexts) {
+            const txt = el.textContent || el.innerText;
+            if (txt && /\b\d[\d,.]*\s*[KMBkmb]?\s*views?\b/i.test(txt)) {
+                const c = parseViewCount(txt);
+                if (c !== -1) return c;
             }
         }
+
+        // ── Strategy 3: legacy ytd-video-meta-block / metadata-line ──
+        const legacy = video.querySelectorAll(
+            '#metadata-line span, ytd-video-meta-block span, ' +
+            '.ytd-video-meta-block span, #metadata span'
+        );
+        for (const el of legacy) {
+            const txt = el.textContent || el.innerText;
+            if (txt && /\b\d[\d,.]*\s*[KMBkmb]?\s*views?\b/i.test(txt)) {
+                const c = parseViewCount(txt);
+                if (c !== -1) return c;
+            }
+        }
+
+        // ── Strategy 4: any child span/div that looks like a view count ──
+        // We scope this narrowly to avoid matching "preview", "interview", etc.
+        const all = video.querySelectorAll('span, div, p');
+        for (const el of all) {
+            const txt = el.textContent || el.innerText;
+            // Must contain a number followed by optional K/M/B and the word "view(s)"
+            if (/\b\d[\d,.]*\s*[KMBkmb]?\s+views?\b/i.test(txt)) {
+                const c = parseViewCount(txt);
+                if (c !== -1) return c;
+            }
+        }
+
+        return -1; // not found
+    }
+
+    /* -------------------- HELPERS -------------------- */
+    function IsMembersOnly(video) {
+        // Members-only badge detection (SVG path or text)
+        return !!video.querySelector(
+            '.badge-style-type-members-only, ' +
+            '[aria-label*="Members only" i], ' +
+            '[aria-label*="Member-only" i]'
+        );
+    }
+
+    function IsShorts() {
+        return location.pathname.startsWith('/shorts');
+    }
+
+    function IsWatch() {
+        return location.pathname === '/watch';
+    }
+
+    function RemoveVideoCard(video, reason) {
+        if (video.style.display === 'none') return;
+        log('Removing video:', reason);
+        video.style.display = 'none';
+        video.setAttribute('data-yt-filter-removed', '1');
+    }
+
+    /* -------------------- MAIN FILTER -------------------- */
+    function UpdateVideoFiltering() {
+        if (IsShorts()) return;
+
+        // Selectors that cover search, home, subscriptions, sidebar, channel grids
+        const selectors = [
+            'ytd-video-renderer',            // Search / home (legacy & new lockup inside)
+            'ytd-rich-item-renderer',        // Home / subscriptions rich grid
+            'ytd-compact-video-renderer',    // Watch-page sidebar / Up next
+            'ytd-grid-video-renderer',       // Channel videos tab grid
+            'ytd-playlist-video-renderer',   // Playlist pages
+            'yt-lockup-view-model',          // Experimental 2025-2026 lockup
+            'ytd-reel-item-renderer'         // Shorts in search (we skip these below)
+        ].join(', ');
+
+        const videos = document.querySelectorAll(selectors);
+
+        videos.forEach(video => {
+            // Already processed or already removed?
+            if (video.getAttribute('data-lowview-checked') === '1') return;
+            if (video.getAttribute('data-yt-filter-removed') === '1') return;
+
+            // Skip Shorts
+            if (video.tagName.toLowerCase() === 'ytd-reel-item-renderer') return;
+            if (video.querySelector('a[href^="/shorts/"]')) return;
+
+            try {
+                const count = getViewCount(video);
+                const viewText = count === -1 ? 'unknown' : count.toLocaleString();
+
+                log('Checked:', viewText, 'views | tag:', video.tagName.toLowerCase());
+
+                // Mark as checked only when we successfully parsed a number
+                if (count !== -1) {
+                    video.setAttribute('data-lowview-checked', '1');
+                }
+
+                // Remove if below threshold OR members-only
+                if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
+                    RemoveVideoCard(video, `views: ${viewText} (threshold: ${MIN_VIEWS_TO_KEEP})`);
+                }
+            } catch (e) {
+                log('Filtering error:', e);
+            }
+        });
+    }
+
+    /* -------------------- TRIGGERS -------------------- */
+    let debounceTimer;
+
+    function scheduleUpdate(delay = 200) {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(UpdateVideoFiltering, delay);
+    }
+
+    // YouTube's internal navigation event
+    document.addEventListener('yt-navigate-finish', () => {
+        setTimeout(UpdateVideoFiltering, 350);
+    });
+
+    window.addEventListener('message', () => {
+        if (!IsShorts()) scheduleUpdate(200);
+    });
+
+    window.addEventListener('load', () => {
+        if (!IsShorts()) scheduleUpdate(200);
+    });
+
+    window.addEventListener('scrollend', () => {
+        if (!IsShorts()) scheduleUpdate(0);
+    });
+
+    window.addEventListener('click', () => {
+        if (!IsShorts()) scheduleUpdate(200);
+    });
+
+    // Detect SPA URL changes
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        const url = location.href;
+        if (url !== lastUrl) {
+            lastUrl = url;
+            if (IsWatch()) {
+                setTimeout(UpdateVideoFiltering, 500);
+            }
+        }
+    }).observe(document, { subtree: true, childList: true });
+
+    // Detect dynamic content injection (related videos, continue watching, etc.)
+    const contentObserver = new MutationObserver((mutations) => {
+        if (IsShorts()) return;
+        let shouldFilter = false;
+        for (const m of mutations) {
+            if (m.type === 'childList' && m.addedNodes.length > 0) {
+                shouldFilter = true;
+                break;
+            }
+        }
+        if (shouldFilter) scheduleUpdate(150);
+    });
+
+    if (document.body) {
+        contentObserver.observe(document.body, { childList: true, subtree: true });
     } else {
-        if (g_VideosFiltering) {
-            // NEW YOUTUBE LAYOUT - yt-lockup-view-model structure
-            // Also covers many new watch/sidebar layouts.
-            let lockupVideos = document.querySelectorAll('yt-lockup-view-model');
-            lockupVideos.forEach(video => {
-                try {
-                    if (video.getAttribute('data-lowview-checked') === '1') {
-                        return;
-                    }
-
-                    const viewsElement = FindViewElementInCard(video);
-                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                    const count = ParseViewCount(viewText);
-
-                    if (count !== -1) {
-                        video.setAttribute('data-lowview-checked', '1');
-                    }
-
-                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                        RemoveVideoCard(video, `new-layout: ${viewText}`);
-                    }
-                } catch (e) {
-                    console.log('new-layout filtering error:', e);
-                }
-            });
-
-            // WATCH SIDEBAR (tight selector)
-            document.querySelectorAll('ytd-compact-video-renderer').forEach(video => {
-                try {
-                    if (video.getAttribute('data-lowview-checked') === '1') {
-                        return;
-                    }
-
-                    const viewsElement = FindViewElementInCard(video);
-                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                    const count = ParseViewCount(viewText);
-
-                    if (count !== -1) {
-                        video.setAttribute('data-lowview-checked', '1');
-                    }
-
-                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                        RemoveVideoCard(video, `sidebar: ${viewText}`);
-                    }
-                } catch (e) {
-                    console.log('sidebar filtering error:', e);
-                }
-            });
-
-            // HOME GRID (tight selector)
-            document.querySelectorAll('ytd-rich-grid-media').forEach(video => {
-                try {
-                    if (video.getAttribute('data-lowview-checked') === '1') {
-                        return;
-                    }
-
-                    const viewsElement = FindViewElementInCard(video);
-                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                    const count = ParseViewCount(viewText);
-
-                    if (count !== -1) {
-                        video.setAttribute('data-lowview-checked', '1');
-                    }
-
-                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                        RemoveVideoCard(video, `home-grid: ${viewText}`);
-                    }
-                } catch (e) {
-                    console.log('home-grid filtering error:', e);
-                }
-            });
-
-            // Legacy rich item renderer (some pages still use it)
-            document.querySelectorAll('ytd-rich-item-renderer').forEach(video => {
-                try {
-                    // Only handle actual video items (avoid shelves/ads/etc.)
-                    const hasVideo = video.querySelector('a[href^="/watch"], ytd-thumbnail');
-                    if (!hasVideo) {
-                        return;
-                    }
-
-                    if (video.getAttribute('data-lowview-checked') === '1') {
-                        return;
-                    }
-
-                    const viewsElement = FindViewElementInCard(video);
-                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                    const count = ParseViewCount(viewText);
-
-                    if (count !== -1) {
-                        video.setAttribute('data-lowview-checked', '1');
-                    }
-
-                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                        RemoveVideoCard(video, `rich-item: ${viewText}`);
-                    }
-                } catch (e) {
-                    console.log('rich-item filtering error:', e);
-                }
-            });
-
-            // Search results (ytd-video-renderer) — new layout also nests
-            // yt-lockup-view-model here but keep a direct fallback too.
-            document.querySelectorAll('ytd-video-renderer').forEach(video => {
-                try {
-                    if (video.getAttribute('data-lowview-checked') === '1') {
-                        return;
-                    }
-
-                    const viewsElement = FindViewElementInCard(video);
-                    const viewText = viewsElement ? (viewsElement.innerText || viewsElement.textContent || '') : '';
-                    const count = ParseViewCount(viewText);
-
-                    if (count !== -1) {
-                        video.setAttribute('data-lowview-checked', '1');
-                    }
-
-                    if ((count !== -1 && count < MIN_VIEWS_TO_KEEP) || IsMembersOnly(video)) {
-                        RemoveVideoCard(video, `search-result: ${viewText}`);
-                    }
-                } catch (e) {
-                    console.log('search-result filtering error:', e);
-                }
-            });
-
-            // NOTE: removed old broad getElementsByClassName("style-scope ...") loops.
-            // Those tended to match too much and cause everything to disappear when views weren't found.
-        }
+        window.addEventListener('DOMContentLoaded', () => {
+            contentObserver.observe(document.body, { childList: true, subtree: true });
+        });
     }
-}
 
-// ---------------------------------------------------------------------------
-document.addEventListener("yt-navigate-finish", () => {
-    setTimeout(UpdateVideoFiltering, 350);
-});
+    // First run
+    setTimeout(UpdateVideoFiltering, 600);
 
-window.addEventListener("message", () => {
-    if (!IsShorts()) {
-        setTimeout(UpdateVideoFiltering, 200);
-    }
-});
-
-window.addEventListener("load", () => {
-    if (!IsShorts()) {
-        setTimeout(UpdateVideoFiltering, 200);
-    }
-});
-
-window.addEventListener("scrollend", () => {
-    if (!IsShorts()) {
-        setTimeout(UpdateVideoFiltering, 0);
-    }
-});
-
-window.addEventListener("click", () => {
-    if (!IsShorts()) {
-        setTimeout(UpdateVideoFiltering, 200);
-    }
-});
-
-let lastUrl = location.href;
-new MutationObserver(() => {
-    const url = location.href;
-    if (url !== lastUrl) {
-        lastUrl = url;
-        if (IsWatch()) {
-            setTimeout(UpdateVideoFiltering, 500);
-        }
-    }
-}).observe(document, { subtree: true, childList: true });
-
-if (typeof window.ytInitialData !== 'undefined') {
-    const observer = new MutationObserver((mutations) => {
-        if (IsWatch()) {
-            let shouldFilter = false;
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    shouldFilter = true;
-                }
-            });
-            if (shouldFilter) {
-                setTimeout(UpdateVideoFiltering, 100);
-            }
-        }
-    });
-
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-}
+})();
